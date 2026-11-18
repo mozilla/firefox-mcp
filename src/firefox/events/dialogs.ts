@@ -11,6 +11,12 @@ export class DialogEvents {
     BrowsingContext.BrowsingContext,
     BrowsingContext.UserPromptOpenedParameters
   >();
+  // Firefox reports a dialog opened in a frame with the frame's context, but
+  // tools only know the top-level context of the page.
+  private topLevelContexts = new Map<
+    BrowsingContext.BrowsingContext,
+    BrowsingContext.BrowsingContext
+  >();
   private subscribed = false;
 
   constructor(private bidi: BiDiFacade) {}
@@ -24,20 +30,41 @@ export class DialogEvents {
     }
 
     await this.bidi.subscribe([
+      'browsingContext.contextCreated',
+      'browsingContext.contextDestroyed',
       'browsingContext.userPromptOpened',
       'browsingContext.userPromptClosed',
     ]);
 
+    this.bidi.on('browsingContext.contextCreated', ({ context, parent }) => {
+      if (parent) {
+        this.topLevelContexts.set(context, this.getTopLevelContext(parent));
+      }
+    });
+
+    this.bidi.on('browsingContext.contextDestroyed', (info) => {
+      this.forgetContext(info);
+    });
+
     this.bidi.on('browsingContext.userPromptOpened', (dialog) => {
-      this.dialogs.set(dialog.context, dialog);
+      this.dialogs.set(this.getTopLevelContext(dialog.context), dialog);
     });
 
     this.bidi.on('browsingContext.userPromptClosed', ({ context }) => {
-      this.dialogs.delete(context);
+      this.dialogs.delete(this.getTopLevelContext(context));
     });
 
     this.subscribed = true;
     logDebug('Dialog listener ready');
+  }
+
+  private getTopLevelContext(context: BrowsingContext.BrowsingContext) {
+    return this.topLevelContexts.get(context) ?? context;
+  }
+
+  private forgetContext({ context, children }: BrowsingContext.Info) {
+    this.topLevelContexts.delete(context);
+    children?.forEach((child) => this.forgetContext(child));
   }
 
   getDialog(context: BrowsingContext.BrowsingContext) {
@@ -56,7 +83,7 @@ export class DialogEvents {
     let removeListener!: () => void;
     const dialogOpened = new Promise<T>((resolve) => {
       const listener = (dialog: BrowsingContext.UserPromptOpenedParameters) => {
-        if (dialog.context === getCurrentContextId()) {
+        if (this.getTopLevelContext(dialog.context) === getCurrentContextId()) {
           resolve(dialogOpenedResult(dialog));
         }
       };
