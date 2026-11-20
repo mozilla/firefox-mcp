@@ -235,6 +235,7 @@ export class FirefoxCore {
   private logFilePath: string | undefined;
   private originalEnv: Record<string, string | undefined> = {};
   private profileWarning: string | null = null;
+  private restrictedUserContext: string | null = null;
 
   constructor(private options: FirefoxLaunchOptions) {}
 
@@ -533,6 +534,14 @@ export class FirefoxCore {
       );
     }
 
+    // Firefox creates a dedicated user context for sessions started at runtime,
+    // and reports it with this capability.
+    const userContext = (driverCapabilities.get('moz:userContext') as string) ?? null;
+    if (userContext && (await this.isSessionRestricted())) {
+      this.restrictedUserContext = userContext;
+      log(`Session restricted to user context ${userContext}`);
+    }
+
     // Remember current window handle (browsing context)
     this.currentContextId = await this.driver.getWindowHandle();
     logDebug(`Browsing context ID: ${this.currentContextId}`);
@@ -665,6 +674,31 @@ export class FirefoxCore {
   }
 
   /**
+   * Whether Firefox restricts the session to its user context. The user context
+   * alone is not enough: the restriction also depends on a Firefox pref. A
+   * restricted session rejects browser.getUserContexts.
+   */
+  private async isSessionRestricted(): Promise<boolean> {
+    try {
+      const bidi = await this.getDriver().getBidi();
+      const response = (await bidi.send({ method: 'browser.getUserContexts', params: {} })) as {
+        error?: string;
+      };
+      return response.error === 'unsupported operation';
+    } catch (error) {
+      logDebug('Unable to check if the session is restricted', error);
+      return false;
+    }
+  }
+
+  /**
+   * User context the session is restricted to, or null for an unrestricted session.
+   */
+  getRestrictedUserContext(): string | null {
+    return this.restrictedUserContext;
+  }
+
+  /**
    * Get log file path
    */
   getLogFilePath(): string | undefined {
@@ -715,6 +749,7 @@ export class FirefoxCore {
     this.currentContextId = null;
     this.logFilePath = undefined;
     this.profileWarning = null;
+    this.restrictedUserContext = null;
 
     // Selenium's quit() skips closing the BiDi WebSocket when onQuit_ is set.
     // We must close it first: geckodriver may not release the Marionette session
