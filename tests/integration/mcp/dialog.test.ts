@@ -266,6 +266,25 @@ describe('Dialog handlers', () => {
       });
     });
 
+    describe('on frames.html', () => {
+      mcpTest.beforeEach(async ({ mcp }) => {
+        await mcp.callTool('navigate_page', { url: fixtureUrl('frames.html') });
+      });
+
+      mcpTest('click_by_uid in an iframe', async ({ mcp }) => {
+        await runScript(
+          mcp,
+          `() => {
+            const frame = document.getElementById('frame').contentWindow;
+            frame.document.getElementById('frameBtn').addEventListener('click', () => frame.alert('foo'), { once: true });
+          }`
+        );
+        const [uid] = await getUids(mcp, 'button "Inside"');
+
+        await expectDialogOpened(mcp, await mcp.callTool('click_by_uid', { uid }));
+      });
+    });
+
     mcpTest('navigate_page', async ({ mcp }) => {
       await expectDialogOpened(
         mcp,
