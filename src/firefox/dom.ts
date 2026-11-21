@@ -155,6 +155,68 @@ function comboKeyActions({ modifiers, key }: KeyCombo): Input.KeySourceAction[] 
   return actions;
 }
 
+export interface WaitForOptions {
+  /** CSS selector of an element that has to be visible */
+  selector?: string | undefined;
+  /** Text that has to be visible */
+  text?: string | undefined;
+  /** Wait until it is no longer there instead */
+  gone?: boolean | undefined;
+  timeout?: number | undefined;
+}
+
+// Looks through the document, its open shadow roots and same-origin frames, like a snapshot does.
+const PRESENCE_SCRIPT = `(selector, text) => {
+  const roots = [document];
+  for (let i = 0; i < roots.length; i++) {
+    for (const el of roots[i].querySelectorAll('*')) {
+      if (el.shadowRoot) {
+        roots.push(el.shadowRoot);
+      }
+      try {
+        if (el.contentDocument) {
+          roots.push(el.contentDocument);
+        }
+      } catch {}
+    }
+  }
+  if (selector) {
+    return roots.some((root) =>
+      [...root.querySelectorAll(selector)].some((el) => el.checkVisibility({ visibilityProperty: true }))
+    );
+  }
+  // An element with display: contents, like a slot, has no box for checkVisibility() to find, so
+  // it is shown as long as its parent in the flat tree is.
+  const isContents = (el) => getComputedStyle(el).display === 'contents';
+  const isShown = (el) =>
+    el.checkVisibility() ||
+    (isContents(el) && isShown(el.assignedSlot ?? el.parentElement ?? el.getRootNode().host));
+  // innerText leaves out hidden descendants, but not the text of an element that is hidden itself
+  const textOf = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return node.data;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return '';
+    }
+    if (node.checkVisibility()) {
+      return node.innerText;
+    }
+    if (!isContents(node)) {
+      return '';
+    }
+    const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : node.childNodes;
+    return [...shown].map(textOf).join('');
+  };
+  const rootText = (root) => {
+    if (root.body) {
+      return textOf(root.body);
+    }
+    return isShown(root.host) ? [...root.childNodes].map(textOf).join('\\n') : '';
+  };
+  return roots.some((root) => rootText(root).includes(text));
+}`;
+
 export class DomInteractions {
   constructor(
     private bidi: BiDiFacade,
@@ -235,6 +297,51 @@ export class DomInteractions {
       context,
       actions: [{ type: 'pointer', id: 'mcp_mouse', actions }],
     });
+  }
+
+  /**
+   * Wait until an element or text shows up, or with gone until it disappears. A page that
+   * navigates in the meantime is searched again once its new document is there, so a failed
+   * try only counts when it is the last one.
+   * @returns Milliseconds waited
+   */
+  async waitFor(
+    context: BrowsingContext.BrowsingContext,
+    options: WaitForOptions
+  ): Promise<number> {
+    const { selector, text, gone = false, timeout = 5000 } = options;
+    const started = Date.now();
+    for (;;) {
+      let present: boolean | undefined;
+      let failure: Error | undefined;
+      try {
+        present = await this.bidi.callFunction<boolean>(
+          context,
+          PRESENCE_SCRIPT,
+          [nativeToLocalValue(selector), nativeToLocalValue(text)],
+          'wait_for'
+        );
+      } catch (error) {
+        failure = error as Error;
+        if (/not a valid selector/.test(failure.message)) {
+          throw failure;
+        }
+      }
+      const waited = Date.now() - started;
+      if (present !== undefined && present !== gone) {
+        return waited;
+      }
+      if (waited >= timeout) {
+        if (failure) {
+          throw failure;
+        }
+        const target = selector ? `selector ${selector}` : `text "${text}"`;
+        throw new Error(
+          `${target} ${gone ? 'was still there' : 'did not appear'} after ${timeout} ms`
+        );
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   // ============================================================================
