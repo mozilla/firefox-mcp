@@ -187,6 +187,11 @@ export class PageManagement {
       throw new Error(`Cannot accept dialog: no browsing context ID`);
     }
 
+    // Listen before accepting, the page can be destroyed before the command returns.
+    const pageClosed = this.#closesBlockedByBeforeUnload.has(contextId)
+      ? await this.#waitForContextDestroyed(contextId)
+      : null;
+
     try {
       await this.bidi.sendCommand('browsingContext.handleUserPrompt', {
         context: contextId,
@@ -194,9 +199,17 @@ export class PageManagement {
         userText: promptText,
       });
     } catch (error) {
+      await pageClosed?.stop();
       throw new Error(
         `Failed to accept dialog: ${error instanceof Error ? error.message : String(error)}`
       );
+    }
+
+    if (pageClosed) {
+      await pageClosed.destroyed;
+      await pageClosed.stop();
+      await this.ensureCurrentContext();
+      await this.refreshTabs();
     }
   }
 
@@ -221,6 +234,8 @@ export class PageManagement {
     }
   }
 
+  // Pages whose close_page call is blocked by a beforeunload prompt
+  #closesBlockedByBeforeUnload = new Set<string>();
   private cachedTabs: Array<{ actor: string; title: string; url: string }> = [];
   // null when a privileged context is selected
   private cachedSelectedIdx: number | null = 0;
@@ -329,24 +344,68 @@ export class PageManagement {
   async closeTab(index: number): Promise<void> {
     const context = this.cachedTabs[index]?.actor;
     if (context) {
-      await this.bidi.sendCommand('browsingContext.close', { context });
-      this.cachedTabs = this.cachedTabs.filter((tab) => tab.actor !== context);
-      if (this.currentContextPrivileged) {
-        return;
+      let promptOpened = false;
+      // The close is no longer blocked once its prompt closes, also when a
+      // user handled the prompt in Firefox.
+      const onPromptClosed = (closed: BrowsingContext.UserPromptClosedParameters) => {
+        if (closed.context === context && (closed.type as string) === 'beforeunload') {
+          this.bidi.off('browsingContext.userPromptClosed', onPromptClosed);
+          this.#closesBlockedByBeforeUnload.delete(context);
+        }
+      };
+      // Only a beforeunload prompt blocks the close. The page can open other
+      // prompts once the beforeunload prompt is dismissed, before the close returns.
+      const onPromptOpened = (prompt: BrowsingContext.UserPromptOpenedParameters) => {
+        if (prompt.context === context && (prompt.type as string) === 'beforeunload') {
+          this.bidi.off('browsingContext.userPromptOpened', onPromptOpened);
+          promptOpened = true;
+          this.#closesBlockedByBeforeUnload.add(context);
+          this.bidi.on('browsingContext.userPromptClosed', onPromptClosed);
+        }
+      };
+      this.bidi.on('browsingContext.userPromptOpened', onPromptOpened);
+      try {
+        await this.bidi.sendCommand('browsingContext.close', { context, promptUnload: true });
+      } finally {
+        this.bidi.off('browsingContext.userPromptOpened', onPromptOpened);
       }
-      const currentId = this.getCurrentContextId();
-      const currentIdx = this.cachedTabs.findIndex((tab) => tab.actor === currentId);
-      if (currentIdx !== -1) {
-        this.cachedSelectedIdx = currentIdx;
-        return;
-      }
-      const next = this.cachedTabs[0]?.actor;
-      if (next) {
-        await this.bidi.sendCommand('browsingContext.activate', { context: next });
-        this.#select(next);
-        this.cachedSelectedIdx = 0;
+      // If a beforeunload prompt opened, close_page already returned, and this
+      // runs only after the prompt was handled. acceptDialog() has updated the
+      // tabs, and after dismissDialog() the page is still open.
+      if (!promptOpened) {
+        await this.ensureCurrentContext();
+        await this.refreshTabs();
       }
     }
+  }
+
+  /**
+   * Start listening for the destruction of a context. Call it before the
+   * action that destroys the context. stop() removes the listener and the
+   * event subscription.
+   */
+  async #waitForContextDestroyed(
+    context: string
+  ): Promise<{ destroyed: Promise<void>; stop: () => Promise<void> }> {
+    const subscription = await this.bidi.subscribe('browsingContext.contextDestroyed');
+
+    let onDestroyed!: (info: BrowsingContext.Info) => void;
+    const destroyed = new Promise<void>((resolve) => {
+      onDestroyed = (info) => {
+        if (info.context === context) {
+          resolve();
+        }
+      };
+    });
+    this.bidi.on('browsingContext.contextDestroyed', onDestroyed);
+
+    return {
+      destroyed,
+      stop: async () => {
+        this.bidi.off('browsingContext.contextDestroyed', onDestroyed);
+        await this.bidi.sendCommand('session.unsubscribe', { subscriptions: [subscription] });
+      },
+    };
   }
 
   /**

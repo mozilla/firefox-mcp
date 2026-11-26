@@ -281,19 +281,113 @@ describe('Dialog handlers', () => {
       await mcp.callTool('close_page', { pageIdx: 1 });
     });
 
-    // skipped because of Bug 2090154: beforeunload dialogs are disabled
-    mcpTest.skip('close_page', async ({ mcp }) => {
+    mcpTest('close_page', async ({ mcp }) => {
       await mcp.callTool('new_page', { url: fixtureUrl('simple.html') });
       await runScript(
         mcp,
         `() => window.addEventListener('beforeunload', (event) => event.preventDefault())`
       );
+      // Firefox only shows beforeunload prompts after a user interaction.
+      const [uid] = await getUids(mcp, 'button "Click Me"');
+      await mcp.callTool('click_by_uid', { uid });
 
       await expectDialogOpened(
         mcp,
         await mcp.callTool('close_page', { pageIdx: 1 }),
         'beforeunload'
       );
+    });
+
+    mcpTest('close_page on a page that is not selected', async ({ mcp }) => {
+      await mcp.callTool('new_page', { url: fixtureUrl('simple.html') });
+      await runScript(
+        mcp,
+        `() => window.addEventListener('beforeunload', (event) => event.preventDefault())`
+      );
+      const [uid] = await getUids(mcp, 'button "Click Me"');
+      await mcp.callTool('click_by_uid', { uid });
+      await mcp.callTool('select_page', { pageIdx: 0 });
+
+      const result = await mcp.callTool('close_page', { pageIdx: 1 });
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain('Dialog opened while tool was running: beforeunload');
+      expect(result.text).toContain('Use select_page with pageIdx 1');
+
+      await mcp.callTool('select_page', { pageIdx: 1 });
+      const accepted = await mcp.callTool('accept_dialog');
+      expect(accepted.isError).toBe(false);
+      await waitFor(async () => (await mcp.callTool('list_pages')).text.startsWith('1 page'));
+    });
+
+    mcpTest('close_page keeps the page when the dialog is dismissed', async ({ mcp }) => {
+      await mcp.callTool('new_page', { url: fixtureUrl('simple.html') });
+      await runScript(
+        mcp,
+        `() => window.addEventListener('beforeunload', (event) => event.preventDefault())`
+      );
+      const [uid] = await getUids(mcp, 'button "Click Me"');
+      await mcp.callTool('click_by_uid', { uid });
+
+      const result = await mcp.callTool('close_page', { pageIdx: 1 });
+      expect(result.text).toContain('Dialog opened while tool was running: beforeunload');
+
+      const dismissed = await mcp.callTool('dismiss_dialog');
+      expect(dismissed.isError).toBe(false);
+      expect((await mcp.callTool('list_pages')).text).toContain('2 pages (selected: 1)');
+
+      await mcp.callTool('close_page', { pageIdx: 1 });
+      await mcp.callTool('accept_dialog');
+      await waitFor(async () => (await mcp.callTool('list_pages')).text.startsWith('1 page'));
+    });
+
+    mcpTest('close_page dialog dismissed outside of the dialog tools', async ({ mcp }) => {
+      await mcp.callTool('new_page', { url: fixtureUrl('simple.html') });
+      await runScript(
+        mcp,
+        `() => window.addEventListener('beforeunload', (event) => event.preventDefault())`
+      );
+      const [uid] = await getUids(mcp, 'button "Click Me"');
+      await mcp.callTool('click_by_uid', { uid });
+      const tree = await mcp.callTool('send_bidi_command', {
+        method: 'browsingContext.getTree',
+        params: { maxDepth: 0 },
+      });
+      const context = [...tree.text.matchAll(/"context": "([^"]+)"/g)].pop()?.[1];
+      assert(context, 'browsingContext.getTree returns the context of the new page');
+
+      const result = await mcp.callTool('close_page', { pageIdx: 1 });
+      expect(result.text).toContain('Dialog opened while tool was running: beforeunload');
+
+      // Dismiss the prompt like a user would in Firefox.
+      await mcp.callTool('send_bidi_command', {
+        method: 'browsingContext.handleUserPrompt',
+        params: { context, accept: false },
+      });
+
+      // Accepting another dialog on the page must not wait for the page to close.
+      await expectDialogOpened(
+        mcp,
+        await mcp.callTool('evaluate_script', { function: `() => alert('foo')` })
+      );
+
+      await mcp.callTool('close_page', { pageIdx: 1 });
+      await mcp.callTool('accept_dialog');
+      await waitFor(async () => (await mcp.callTool('list_pages')).text.startsWith('1 page'));
+    });
+
+    mcpTest('close_page on a page with an open dialog', async ({ mcp }) => {
+      await mcp.callTool('new_page', { url: fixtureUrl('simple.html') });
+      await mcp.callTool('evaluate_script', { function: `() => alert('foo')` });
+      await mcp.callTool('select_page', { pageIdx: 0 });
+
+      const result = await mcp.callTool('close_page', { pageIdx: 1 });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain('A dialog is blocking this tool from running: alert "foo"');
+      expect(result.text).toContain('Use select_page with pageIdx 1');
+
+      await mcp.callTool('select_page', { pageIdx: 1 });
+      await mcp.callTool('accept_dialog');
+      await mcp.callTool('close_page', { pageIdx: 1 });
     });
   });
 
