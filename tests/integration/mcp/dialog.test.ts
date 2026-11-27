@@ -266,6 +266,25 @@ describe('Dialog handlers', () => {
       });
     });
 
+    describe('on frames.html', () => {
+      mcpTest.beforeEach(async ({ mcp }) => {
+        await mcp.callTool('navigate_page', { url: fixtureUrl('frames.html') });
+      });
+
+      mcpTest('click_by_uid in an iframe', async ({ mcp }) => {
+        await runScript(
+          mcp,
+          `() => {
+            const frame = document.getElementById('frame').contentWindow;
+            frame.document.getElementById('frameBtn').addEventListener('click', () => frame.alert('foo'), { once: true });
+          }`
+        );
+        const [uid] = await getUids(mcp, 'button "Inside"');
+
+        await expectDialogOpened(mcp, await mcp.callTool('click_by_uid', { uid }));
+      });
+    });
+
     mcpTest('navigate_page', async ({ mcp }) => {
       await expectDialogOpened(
         mcp,
@@ -297,9 +316,16 @@ describe('Dialog handlers', () => {
     });
   });
 
-  describe('tools should fail when a dialog is already open', () => {
+  describe.each([
+    { source: 'the page', openDialog: `() => alert('foo')` },
+    {
+      source: 'an iframe',
+      openDialog: `() => document.getElementById('frame').contentWindow.alert('foo')`,
+    },
+  ])('tools should fail when a dialog from $source is already open', ({ openDialog }) => {
     mcpTest.beforeAll(async ({ mcp }) => {
-      const result = await mcp.callTool('evaluate_script', { function: `() => alert('foo')` });
+      await mcp.callTool('navigate_page', { url: fixtureUrl('frames.html') });
+      const result = await mcp.callTool('evaluate_script', { function: openDialog });
       expect(result.isError).toBe(false);
       expect(result.text).toContain('Dialog opened while tool was running: alert "foo"');
     });
