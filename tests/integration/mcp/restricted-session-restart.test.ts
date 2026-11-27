@@ -30,7 +30,7 @@ mcpTest.describe('Restricted session restart (MCP)', () => {
       throw new Error(`Unknown Firefox version in: ${info.text}`);
     }
     supported = compareVersions(version, '160.0') >= 0;
-  }, 60000);
+  });
 
   mcpTest.beforeEach(({ skip }) => {
     if (!supported) {

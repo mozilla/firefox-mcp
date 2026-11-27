@@ -49,7 +49,7 @@ mcpTest.describe('list_extensions (MCP)', () => {
     expect(installed.isError).toBe(false);
     extensionId = /ID: (\S+)/.exec(installed.text)?.[1] ?? '';
     expect(extensionId).toBeTruthy();
-  }, 60000);
+  });
 
   mcpTest.afterAll(async ({ mcp }) => {
     try {

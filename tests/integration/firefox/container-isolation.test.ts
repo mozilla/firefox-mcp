@@ -50,7 +50,7 @@ describe('Container restricted session', () => {
       prefs: { [FORCE_CONTAINER_PREF]: true, [CONTAINER_ISOLATION_PREF]: true },
     });
     supported = isSupported(firefox);
-  }, 30000);
+  });
 
   afterAll(async () => {
     await closeFirefox(firefox);
@@ -165,7 +165,7 @@ describe('Container session without isolation', () => {
 
   beforeAll(async () => {
     firefox = await createTestFirefox({ prefs: { [FORCE_CONTAINER_PREF]: true } });
-  }, 30000);
+  });
 
   afterAll(async () => {
     await closeFirefox(firefox);
