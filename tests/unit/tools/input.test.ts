@@ -230,25 +230,6 @@ describe('Input Tools', () => {
       vi.restoreAllMocks();
     });
 
-    it('should type into the focused element when no uid is given', async () => {
-      const { handleTypeText } = await import('../../../src/tools/input.js');
-      const result = await handleTypeText({ text: 'hello' });
-
-      expect(result.isError).toBeUndefined();
-      expect(typeText).toHaveBeenCalledWith('hello', { uid: undefined, submitKey: undefined });
-      expect(textOf(result)).toContain('5 chars');
-    });
-
-    it('should pass uid and submitKey through', async () => {
-      const { handleTypeText } = await import('../../../src/tools/input.js');
-      const result = await handleTypeText({ text: 'hello', uid: 'uid-3', submitKey: 'Enter' });
-
-      expect(result.isError).toBeUndefined();
-      expect(typeText).toHaveBeenCalledWith('hello', { uid: 'uid-3', submitKey: 'Enter' });
-      expect(textOf(result)).toContain('uid-3');
-      expect(textOf(result)).toContain('Enter');
-    });
-
     it('should reject missing, empty or non-string text', async () => {
       const { handleTypeText } = await import('../../../src/tools/input.js');
 

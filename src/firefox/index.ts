@@ -17,7 +17,7 @@ import {
   DialogEvents,
 } from './events/index.js';
 import type { NetworkBodyResult } from './events/network.js';
-import { DomInteractions, type WaitForOptions } from './dom.js';
+import { DomInteractions, type FocusedElement, type WaitForOptions } from './dom.js';
 import { PageManagement } from './pages.js';
 import { CacheManagement, type CacheBehavior } from './cache.js';
 import { SnapshotManager, type Snapshot, type SnapshotOptions } from './snapshot/index.js';
@@ -212,7 +212,7 @@ export class FirefoxClient {
   async typeText(
     text: string,
     options?: { uid?: string | undefined; submitKey?: string | undefined }
-  ): Promise<void> {
+  ): Promise<FocusedElement> {
     return await this.getDom().typeText(this.getContext(), text, options);
   }
 

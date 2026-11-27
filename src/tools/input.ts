@@ -175,7 +175,7 @@ export const pressKeyTool = {
 export const typeTextTool = {
   name: 'type_text',
   description:
-    'Type text key by key into the focused element, optionally followed by a key such as Enter. Use fill_by_uid to set the value of a known input; use this for elements that only react to real typing, such as autocomplete fields and rich text editors.',
+    'Type text key by key into the focused element, optionally followed by a key such as Enter. Use fill_by_uid to set the value of a known input; use this for elements that only react to real typing, such as autocomplete fields and rich text editors. Reports the element that has focus afterwards, with its value.',
   annotations: {
     readOnlyHint: false,
   },
@@ -416,10 +416,13 @@ export const handleTypeText = defineToolHandler<typeof typeTextTool>(
     const firefox = await getFirefox();
 
     try {
-      await firefox.typeText(text, { uid, submitKey });
+      const focused = await firefox.typeText(text, { uid, submitKey });
       const target = uid ? ` on ${uid}` : '';
       const suffix = submitKey ? `, then ${submitKey}` : '';
-      return successResponse(`type_text ${text.length} chars${target}${suffix}`);
+      const value = focused.value === undefined ? '' : `, value: ${JSON.stringify(focused.value)}`;
+      return successResponse(
+        `type_text ${text.length} chars${target}${suffix}\nFocused: ${focused.tag}${value}`
+      );
     } catch (error) {
       if (uid) {
         throw handleUidError(error as Error, uid);

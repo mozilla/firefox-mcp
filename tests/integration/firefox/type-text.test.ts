@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   createTestFirefox,
   closeFirefox,
+  fixtureUrl,
   waitForElementInSnapshot,
 } from '../../helpers/firefox.js';
 import type { FirefoxClient } from '@/firefox/index.js';
@@ -95,8 +96,50 @@ describe('type_text Integration Tests', () => {
     const uid = await uidOf('h');
 
     await expect(firefox.typeText('nope', { uid })).rejects.toThrow(
-      /cannot receive keyboard focus/
+      /^uid \S+ cannot receive keyboard focus/
     );
     expect(await recordedKeys()).toEqual([]);
   }, 20000);
+  describe('focused element', () => {
+    it('should return the focused input and its value', async () => {
+      await openPage();
+
+      const focused = await firefox.typeText('hi', { uid: await uidOf('a') });
+
+      expect(focused).toEqual({ tag: 'input', value: 'hi' });
+    }, 20000);
+
+    it('should return the element that has focus after the submit key', async () => {
+      await openPage();
+      await firefox.evaluate(`document.getElementById('b').value = 'next'`);
+
+      const focused = await firefox.typeText('first', { uid: await uidOf('a'), submitKey: 'Tab' });
+
+      expect(focused).toEqual({ tag: 'input', value: 'next' });
+    }, 20000);
+
+    it('should return no value for an element without one', async () => {
+      await firefox.navigate('data:text/html,<div id=e contenteditable></div>');
+
+      const focused = await firefox.typeText('hi', { uid: await uidOf('e') });
+
+      expect(focused).toEqual({ tag: 'div' });
+    }, 20000);
+
+    it('should look into open shadow roots', async () => {
+      await firefox.navigate(fixtureUrl('shadow-dom.html'));
+      const focused = await firefox.typeText('deep', { uid: await uidOf('deep') });
+
+      expect(focused).toEqual({ tag: 'input', value: 'deep' });
+    }, 20000);
+
+    it('should look into same-origin iframes when no uid is given', async () => {
+      await firefox.navigate('data:text/html,<iframe srcdoc="<input id=inner>"></iframe>');
+      await firefox.typeText('ab', { uid: await uidOf('inner') });
+
+      const focused = await firefox.typeText('cd');
+
+      expect(focused).toEqual({ tag: 'input', value: 'abcd' });
+    }, 20000);
+  });
 });
