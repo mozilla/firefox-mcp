@@ -253,7 +253,7 @@ Parameters:
 
 ### `type_text`
 
-Type text key by key into the focused element, optionally followed by a key such as Enter. Use fill_by_uid to set the value of a known input; use this for elements that only react to real typing, such as autocomplete fields and rich text editors.
+Type text key by key into the focused element, optionally followed by a key such as Enter. Use fill_by_uid to set the value of a known input; use this for elements that only react to real typing, such as autocomplete fields and rich text editors. Reports the element that has focus afterwards, with its value.
 
 Parameters:
 

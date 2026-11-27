@@ -155,6 +155,13 @@ function comboKeyActions({ modifiers, key }: KeyCombo): Input.KeySourceAction[] 
   return actions;
 }
 
+export interface FocusedElement {
+  /** Local name of the focused element, or "none" */
+  tag: string;
+  /** Current value, for elements that have one, such as inputs and textareas */
+  value?: string;
+}
+
 export interface WaitForOptions {
   /** CSS selector of an element that has to be visible */
   selector?: string | undefined;
@@ -565,13 +572,11 @@ export class DomInteractions {
     context: BrowsingContext.BrowsingContext,
     text: string,
     options: { uid?: string | undefined; submitKey?: string | undefined } = {}
-  ): Promise<void> {
+  ): Promise<FocusedElement> {
     // Parsed up front so that an invalid key fails before anything is typed.
     const submit = options.submitKey === undefined ? undefined : parseKeyCombo(options.submitKey);
 
-    if (options.uid) {
-      await this.focusByUid(context, options.uid);
-    }
+    const frame = options.uid ? await this.focusByUid(context, options.uid) : context;
 
     // One sequence, so that the text and the key land on the same element.
     const actions = textKeyActions(text);
@@ -579,13 +584,47 @@ export class DomInteractions {
       actions.push(...comboKeyActions(submit));
     }
     await this.sendKeyActions(context, actions);
+
+    return await this.getFocusedElement(frame);
+  }
+
+  /**
+   * Describe the element that has keyboard focus in the given context, looking
+   * into open shadow roots and same-origin iframes.
+   */
+  private async getFocusedElement(
+    context: BrowsingContext.BrowsingContext
+  ): Promise<FocusedElement> {
+    return await this.bidi.callFunction<FocusedElement>(
+      context,
+      `() => {
+        let el = document.activeElement;
+        while (el) {
+          const inner = el.shadowRoot?.activeElement ?? el.contentDocument?.activeElement;
+          if (!inner) {
+            break;
+          }
+          el = inner;
+        }
+        if (!el) {
+          return { tag: 'none' };
+        }
+        return ['input', 'textarea', 'select'].includes(el.localName)
+          ? { tag: el.localName, value: el.value }
+          : { tag: el.localName };
+      }`,
+      []
+    );
   }
 
   /**
    * Focus the element for the provided uid. Throws if the element cannot be
    * focused.
    */
-  private async focusByUid(context: BrowsingContext.BrowsingContext, uid: string): Promise<void> {
+  private async focusByUid(
+    context: BrowsingContext.BrowsingContext,
+    uid: string
+  ): Promise<BrowsingContext.BrowsingContext> {
     const { context: frame, element: el } = await this.resolveUid(context, uid);
     await this.waitForVisible(frame, el, 5000);
     const focused = await this.bidi.callFunction(
@@ -595,9 +634,10 @@ export class DomInteractions {
     );
     if (!focused) {
       throw new Error(
-        `pressKey: uid ${uid} cannot receive keyboard focus. Target a focusable element, or omit uid to send the key to the currently focused element.`
+        `uid ${uid} cannot receive keyboard focus. Target a focusable element, or omit uid to send keys to the currently focused element.`
       );
     }
+    return frame;
   }
 
   // ============================================================================
